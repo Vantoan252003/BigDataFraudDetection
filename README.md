@@ -25,7 +25,7 @@ cd BigDataFraudDetection
 ```
 
 ### 2. Thêm Dữ Liệu (🚨 BƯỚC BẮT BUỘC)
-Do giới hạn lưu trữ của GitHub (chỉ cho phép tối đa 100MB mỗi file), các tệp dữ liệu nguyên gốc (`paysim.csv`, `creditcard.csv`) KHÔNG CÓ TRÊN GITHUB. **Hệ thống của bạn sẽ chạy lỗi nếu không làm bước này.**
+Do giới hạn lưu trữ của GitHub (chỉ cho phép tối đa 100MB mỗi file), các tệp dữ liệu nguyên gốc (`paysim.csv`) KHÔNG CÓ TRÊN GITHUB. **Hệ thống của bạn sẽ chạy lỗi nếu không làm bước này.**
 1. Tạo một thư mục có tên `data/` trong thư mục gốc của project (ngang hàng với README.md).
 2. Tải và thả file `paysim.csv` vô trong thư mục `data/` mà bạn vừa tạo để container `producer` có thể tìm thấy file.
 

@@ -5,7 +5,7 @@ __pycache__/
 
 # C extensions
 *.so
-
+data/
 # test notebook
 test.ipynb
 consumer_test.py
