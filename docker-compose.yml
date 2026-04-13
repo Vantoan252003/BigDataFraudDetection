@@ -163,7 +163,7 @@ services:
     image: ghcr.io/mlflow/mlflow:v2.13.0
     container_name: fraud_mlflow
     ports:
-      - "5050:5000"
+      - "5000:5000"
     volumes:
       - ./scripts:/app/scripts
       - ./mlflow:/mlflow
