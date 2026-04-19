@@ -9,6 +9,7 @@ from pyspark.sql.functions import col
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 PAYSIM_PATH = os.getenv("PAYSIM_PATH", "data/paysim.csv")
 BLACKLIST_KEY = "fraud:blacklist"
 
@@ -26,7 +27,7 @@ def load_blacklist():
                        .rdd.flatMap(lambda x: x) \
                        .collect()
 
-    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD, decode_responses=True)
     
     # SADD batch — O(1) per member lookup
     pipe = r.pipeline()

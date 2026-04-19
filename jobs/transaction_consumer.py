@@ -28,6 +28,7 @@ POSTGRES_USER = os.getenv("POSTGRES_USER", "fraud_user")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "fraud_pass")
 MODEL_PATH = os.getenv("MODEL_PATH", "/models/fraud_rf_v1")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 CHECKPOINT_PATH = "/tmp/fraud_checkpoint/transactions"
 
 # ── PaySim schema ─────────────────────────────────────────────────
@@ -47,7 +48,7 @@ PAYSIM_SCHEMA = StructType([
 
 def load_blacklist_from_redis():
     """Load toàn bộ blacklist từ Redis vào Python set để broadcast"""
-    r = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
+    r = redis.Redis(host=REDIS_HOST, port=6379, password=REDIS_PASSWORD, decode_responses=True)
     blacklist = r.smembers("fraud:blacklist")
     logger.info(f"Loaded {len(blacklist):,} accounts from Redis blacklist")
     return blacklist

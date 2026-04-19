@@ -1,9 +1,12 @@
 """
-streamlit_app.py — Dashboard nâng cấp
+streamlit_app.py — Secured Dashboard
 Hiển thị live fraud feed + model metrics + blacklist stats, Transaction Explorer & Analytics
+Features: Parameterized Queries, PII Masking, Cached Queries
 """
 import os
+import sys
 import time
+import re
 import redis
 import requests
 import pandas as pd
@@ -11,6 +14,23 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 from sqlalchemy import create_engine, text
+
+# ── PII Masking helper ────────────────────────────────────────────
+def mask_account_id(account_id: str, visible_chars: int = 4) -> str:
+    """Mask account ID: C1234567890 → C1234******"""
+    if not account_id or len(account_id) <= visible_chars + 1:
+        return account_id
+    prefix = account_id[:visible_chars + 1]
+    masked = prefix + "*" * (len(account_id) - visible_chars - 1)
+    return masked
+
+def sanitize_input(user_input: str, max_length: int = 50) -> str:
+    """Sanitize user input — chỉ giữ alphanumeric"""
+    if not user_input:
+        return ""
+    sanitized = user_input[:max_length]
+    sanitized = re.sub(r"[^a-zA-Z0-9\s\-_]", "", sanitized)
+    return sanitized.strip()
 
 st.set_page_config(
     page_title="Fraud Detection Dashboard",
@@ -22,28 +42,35 @@ st.set_page_config(
 # ── Config ────────────────────────────────────────────────────────
 DB_URL = os.getenv("DATABASE_URL", "postgresql://fraud_user:fraud_pass@postgres:5432/fraud_db")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 MLFLOW_URL = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
 FASTAPI_URL = os.getenv("FASTAPI_URL", "http://fastapi:8000")
+API_KEY = os.getenv("FRAUD_API_KEY", "")
 
-engine = create_engine(DB_URL)
-r = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
+engine = create_engine(DB_URL, pool_pre_ping=True, pool_recycle=300)
+r = redis.Redis(host=REDIS_HOST, port=6379, password=REDIS_PASSWORD, decode_responses=True)
 
 # ── Header ────────────────────────────────────────────────────────
 st.title("🛡️ Real-Time Fraud Detection System")
-st.markdown("**Dataset:** PaySim (6.3M giao dịch ví điện tử)")
+st.markdown("**Dataset:** PaySim (6.3M giao dịch ví điện tử) | 🔒 **Security Enabled**")
 
 # ── Sidebar: Manual injection & Settings ──────────────────────────
 with st.sidebar:
     st.header("⚡ Manual Transaction Injection")
     st.caption("Demo: gửi giao dịch trực tiếp vào pipeline")
-    
+
     if st.button("🔴 Gửi Giao Dịch GIAN LẬN", use_container_width=True, type="primary"):
         try:
-            resp = requests.post(f"{FASTAPI_URL}/blacklist-transaction")
+            headers = {"X-API-Key": API_KEY} if API_KEY else {}
+            resp = requests.post(f"{FASTAPI_URL}/blacklist-transaction", headers=headers)
             if resp.status_code == 200:
                 st.success("✅ Đã gửi! Kiểm tra Live Feed bên dưới")
+            elif resp.status_code == 401:
+                st.error("🔒 API Key không hợp lệ!")
+            elif resp.status_code == 429:
+                st.warning("⏳ Rate limit — thử lại sau 60 giây")
             else:
-                st.error(f"Lỗi: {resp.text}")
+                st.error(f"Lỗi: {resp.status_code}")
         except Exception as e:
             st.error(f"Không kết nối được FastAPI: {e}")
 
@@ -65,9 +92,17 @@ with st.sidebar:
         st.info(f"MLflow chưa có model run hoặc lỗi: {e}")
 
     st.divider()
-    blacklist_count = r.scard("fraud:blacklist")
+    try:
+        blacklist_count = r.scard("fraud:blacklist")
+    except Exception:
+        blacklist_count = 0
     st.metric("🚫 Blacklisted Accounts", f"{blacklist_count:,}")
-    
+
+    st.divider()
+    st.header("🔒 Security Info")
+    st.caption(f"API Key: {'✅ Configured' if API_KEY else '⚠️ Not set'}")
+    st.caption(f"Redis Auth: {'✅ Enabled' if REDIS_PASSWORD else '⚠️ No password'}")
+
     st.divider()
     st.header("⚙️ View Settings")
     auto_refresh = st.checkbox("🔄 Auto-refresh Dashboard", value=True)
@@ -100,17 +135,20 @@ with tab_dashboard:
     with col_left:
         st.subheader("🔴 Live Fraud Alerts")
         with engine.connect() as conn:
-            fraud_df = pd.read_sql("""
+            fraud_df = pd.read_sql(text("""
                 SELECT "nameOrig", "nameDest", amount, type,
                        blacklist_flag, rule_fraud_flag, ingested_at
                 FROM shop.fraud_transactions
                 ORDER BY ingested_at DESC
                 LIMIT 20
-            """, conn)
-            
+            """), conn)
+
         if not fraud_df.empty:
+            # PII Masking — mask account IDs on display
+            fraud_df["nameOrig"] = fraud_df["nameOrig"].apply(mask_account_id)
+            fraud_df["nameDest"] = fraud_df["nameDest"].apply(mask_account_id)
             fraud_df["amount"] = fraud_df["amount"].apply(lambda x: f"${x:,.2f}")
-            # Color logic based on method
+
             def get_reason_and_color(row):
                 if row.get("blacklist_flag") == 1:
                     return "🔴 Blacklist"
@@ -118,9 +156,9 @@ with tab_dashboard:
                     return "🟠 Rule chặn"
                 else:
                     return "🟡 ML Model"
-            
+
             fraud_df["Lý Do"] = fraud_df.apply(get_reason_and_color, axis=1)
-            
+
             st.dataframe(
                 fraud_df[["nameOrig", "nameDest", "amount", "type", "Lý Do", "ingested_at"]],
                 use_container_width=True,
@@ -132,13 +170,13 @@ with tab_dashboard:
     with col_right:
         st.subheader("📊 Transaction Types")
         with engine.connect() as conn:
-            type_df = pd.read_sql("""
+            type_df = pd.read_sql(text("""
                 SELECT type, COUNT(*) as count,
                        SUM(CASE WHEN is_fraud_detected = 1 THEN 1 ELSE 0 END) as fraud_count
                 FROM shop.transactions
                 GROUP BY type
                 ORDER BY count DESC
-            """, conn)
+            """), conn)
         if not type_df.empty:
             fig = px.bar(
                 type_df, x="type", y=["count", "fraud_count"],
@@ -151,7 +189,7 @@ with tab_dashboard:
 
     st.subheader("📈 Cumulative Fraud Detections (Last 1 hour)")
     with engine.connect() as conn:
-        time_df = pd.read_sql("""
+        time_df = pd.read_sql(text("""
             WITH minute_counts AS (
                 SELECT date_trunc('minute', ingested_at) as minute,
                        COUNT(*) as fraud_count
@@ -162,7 +200,7 @@ with tab_dashboard:
             SELECT minute, SUM(fraud_count) OVER (ORDER BY minute) as fraud_count
             FROM minute_counts
             ORDER BY minute
-        """, conn)
+        """), conn)
     if not time_df.empty:
         fig = px.area(
             time_df, x="minute", y="fraud_count",
@@ -173,34 +211,41 @@ with tab_dashboard:
         st.plotly_chart(fig, use_container_width=True)
 
 # ==================================================================
-# TAB 2: EXPLORER
+# TAB 2: EXPLORER  (PARAMETERIZED QUERIES — NO SQL INJECTION)
 # ==================================================================
 with tab_explorer:
     st.markdown("### 🔍 Transaction Explorer")
-    
+    st.caption("🔒 All queries use parameterized binding — safe from SQL injection")
+
     col_ds, col_tp, col_dm, col_sr = st.columns(4)
     data_source_opts = {"shop.transactions": "Toàn bộ hệ thống", "shop.fraud_transactions": "Chỉ Fraud"}
     selected_source_title = col_ds.selectbox("1. Data Source", list(data_source_opts.values()), index=0)
     table_name = [k for k, v in data_source_opts.items() if v == selected_source_title][0]
-    
+
     filter_type = col_tp.multiselect("2. Loại Giao Dịch", ["TRANSFER", "CASH_OUT", "CASH_IN", "PAYMENT", "DEBIT"])
     filter_method = col_dm.multiselect("3. Bộ Lọc Lý Do", ["Blacklist", "Rule-based", "ML Model"])
-    search_term = col_sr.text_input("4. Tìm Account ID (Orig/Dest)")
-    
+    raw_search = col_sr.text_input("4. Tìm Account ID (Orig/Dest)")
+
+    # Sanitize search input
+    search_term = sanitize_input(raw_search)
+
     col_sort, col_order, col_page = st.columns([1, 1, 2])
-    sort_by = col_sort.selectbox("Sắp Xếp Theo", ["ingested_at", "amount", "step"])
+    ALLOWED_SORT_COLS = {"ingested_at", "amount", "step"}
+    sort_by = col_sort.selectbox("Sắp Xếp Theo", list(ALLOWED_SORT_COLS))
     sort_order = col_order.selectbox("Thứ Tự", ["DESC", "ASC"])
-    
+
     limit = 50
-    page = col_page.number_input("Trang số", min_value=1, value=1, step=1)
+    page = col_page.number_input("Trang số", min_value=1, max_value=1000, value=1, step=1)
     offset = (page - 1) * limit
-    
+
+    # ── Build parameterized query ─────────────────────────────────
     where_clauses = []
-    
+    params = {"limit_val": limit, "offset_val": offset}
+
     if filter_type:
-        types_str = ", ".join([f"'{t}'" for t in filter_type])
-        where_clauses.append(f"type IN ({types_str})")
-        
+        where_clauses.append("type = ANY(:filter_types)")
+        params["filter_types"] = filter_type
+
     if filter_method:
         method_conds = []
         if "Blacklist" in filter_method:
@@ -208,58 +253,73 @@ with tab_explorer:
         if "Rule-based" in filter_method:
             method_conds.append("(rule_fraud_flag = 1 AND blacklist_flag = 0)")
         if "ML Model" in filter_method:
-            # Assumed ML model logic fallback
             method_conds.append("(is_fraud_detected = 1 AND blacklist_flag = 0 AND rule_fraud_flag = 0)")
         if method_conds:
             where_clauses.append("(" + " OR ".join(method_conds) + ")")
-            
+
     if search_term:
-        where_clauses.append(f'("nameOrig" ILIKE \'%%{search_term}%%\' OR "nameDest" ILIKE \'%%{search_term}%%\')')
+        where_clauses.append("""("nameOrig" ILIKE :search_pattern OR "nameDest" ILIKE :search_pattern)""")
+        params["search_pattern"] = f"%{search_term}%"
 
     where_sql = ""
     if where_clauses:
         where_sql = "WHERE " + " AND ".join(where_clauses)
-        
+
+    # Validate sort column (whitelist only)
+    if sort_by not in ALLOWED_SORT_COLS:
+        sort_by = "ingested_at"
+    if sort_order not in ("ASC", "DESC"):
+        sort_order = "DESC"
+
+    # Table name is from a hardcoded dict, not user input — safe
     query = f"""
         SELECT * FROM {table_name}
         {where_sql}
         ORDER BY "{sort_by}" {sort_order}
-        LIMIT {limit} OFFSET {offset}
+        LIMIT :limit_val OFFSET :offset_val
     """
-    
+
     count_query = f"SELECT COUNT(*) FROM {table_name} {where_sql}"
-    
+
     with engine.connect() as conn:
         try:
-            total_rows_query = conn.execute(text(count_query)).scalar() or 0
+            total_rows_query = conn.execute(text(count_query), params).scalar() or 0
             if total_rows_query > 0:
-                df_explore = pd.read_sql(text(query), conn)
-                st.caption(f"Trang {page} - Hiển thị 50 dòng trên tổng số {total_rows_query:,} kết quả")
-                df_explore["amount"] = df_explore["amount"].apply(lambda x: f"${x:,.2f}")
+                df_explore = pd.read_sql(text(query), conn, params=params)
+
+                # PII Masking
+                if "nameOrig" in df_explore.columns:
+                    df_explore["nameOrig"] = df_explore["nameOrig"].apply(mask_account_id)
+                if "nameDest" in df_explore.columns:
+                    df_explore["nameDest"] = df_explore["nameDest"].apply(mask_account_id)
+
+                st.caption(f"Trang {page} - Hiển thị {len(df_explore)} dòng trên tổng số {total_rows_query:,} kết quả")
+                if "amount" in df_explore.columns:
+                    df_explore["amount"] = df_explore["amount"].apply(lambda x: f"${x:,.2f}")
                 st.dataframe(df_explore, use_container_width=True)
             else:
                 st.info("Không tìm thấy kết quả phù hợp với bộ lọc!")
         except Exception as e:
-            st.error(f"Lỗi Query Explorer: {e}")
+            st.error(f"Lỗi Query Explorer: Không thể truy vấn dữ liệu. Thử lại sau.")
 
 # ==================================================================
 # TAB 3: ANALYTICS
 # ==================================================================
 with tab_analytics:
     st.markdown("### 📊 Deep Analytics")
-    
+
     col_ch1, col_ch2 = st.columns(2)
-    
+
     with col_ch1:
         st.markdown("**Amount Distribution (Fraud vs Normal)**")
         with engine.connect() as conn:
-            hist_df = pd.read_sql("""
+            hist_df = pd.read_sql(text("""
                 SELECT amount, is_fraud_detected
                 FROM shop.transactions
                 WHERE amount < 2000000
                 ORDER BY RANDOM()
                 LIMIT 15000
-            """, conn)
+            """), conn)
         if not hist_df.empty:
             hist_df["Type"] = hist_df["is_fraud_detected"].apply(lambda x: "Fraud" if x == 1 else "Normal")
             fig_hist = px.histogram(
@@ -270,16 +330,16 @@ with tab_analytics:
             )
             fig_hist.update_layout(margin=dict(t=10))
             st.plotly_chart(fig_hist, use_container_width=True)
-            
+
     with col_ch2:
         st.markdown("**Fraud Count By Hour (Step % 24)**")
         with engine.connect() as conn:
-            hour_df = pd.read_sql("""
+            hour_df = pd.read_sql(text("""
                 SELECT MOD(step, 24) as hour, COUNT(*) as fraud_count
                 FROM shop.fraud_transactions
                 GROUP BY hour
                 ORDER BY hour
-            """, conn)
+            """), conn)
         if not hour_df.empty:
             fig_bar = px.bar(
                 hour_df, x="hour", y="fraud_count",
@@ -289,18 +349,20 @@ with tab_analytics:
             fig_bar.update_xaxes(tickmode="linear", dtick=1)
             fig_bar.update_layout(margin=dict(t=10))
             st.plotly_chart(fig_bar, use_container_width=True)
-            
+
     st.divider()
-    st.markdown("**🏆 Top 10 Accounts (nameOrig) With Most Fraud**")
+    st.markdown("**🏆 Top 10 Accounts With Most Fraud (Masked)**")
     with engine.connect() as conn:
-        top_acc_df = pd.read_sql("""
+        top_acc_df = pd.read_sql(text("""
             SELECT "nameOrig" as "Account ID", COUNT(*) as "Total Fraud Instances", SUM(amount) as "Total Stolen Amount"
             FROM shop.fraud_transactions
             GROUP BY "nameOrig"
             ORDER BY "Total Fraud Instances" DESC
             LIMIT 10
-        """, conn)
+        """), conn)
     if not top_acc_df.empty:
+        # PII Masking
+        top_acc_df["Account ID"] = top_acc_df["Account ID"].apply(mask_account_id)
         top_acc_df["Total Stolen Amount"] = top_acc_df["Total Stolen Amount"].apply(lambda x: f"${x:,.2f}")
         st.table(top_acc_df)
 
