@@ -9,7 +9,7 @@ on:
 jobs:
   # ── Job 1: Test ─────────────────────────────────────────────────
   test:
-    name: 🧪 Run Tests
+    name: Run Tests
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -50,7 +50,7 @@ jobs:
 
   # ── Job 3: Deploy to Oracle Cloud ──────────────────────────────
   deploy:
-    name: 🚀 Deploy to Oracle Cloud
+    name: Deploy to Oracle Cloud
     needs: docker-build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -72,16 +72,16 @@ jobs:
       run: |
         SSH_CMD="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${USER}@${HOST}"
 
-        echo "📦 Pulling latest code..."
+        echo "Pulling latest code..."
         $SSH_CMD "cd ~/BigDataFraudDetection && git pull origin main"
 
-        echo "🔄 Restarting services..."
+        echo "Restarting services..."
         $SSH_CMD "cd ~/BigDataFraudDetection && sudo docker compose pull 2>/dev/null; sudo docker compose up -d --build --remove-orphans"
 
-        echo "⏳ Waiting for services to be healthy..."
+        echo "Waiting for services to be healthy..."
         sleep 30
 
-        echo "✅ Checking service health..."
+        echo "Checking service health..."
         $SSH_CMD "cd ~/BigDataFraudDetection && sudo docker compose ps"
 
     - name: Verify deployment
