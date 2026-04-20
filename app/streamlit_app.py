@@ -89,7 +89,8 @@ with st.sidebar:
             resp.raise_for_status()
             runs = resp.json()
             if runs.get("runs"):
-                metrics_list = runs["runs"][0]["data"]["metrics"]
+                # Sử dụng .get() để tránh KeyError nếu 'metrics' chưa hiện diện
+                metrics_list = runs["runs"][0]["data"].get("metrics", [])
                 return {m["key"]: m["value"] for m in metrics_list}
             return None
         except Exception as e:

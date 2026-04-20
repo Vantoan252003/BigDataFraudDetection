@@ -159,6 +159,8 @@ services:
     networks:
       - fraud_network
     mem_limit: 2g
+    profiles:
+      - jobs
 
   blacklist_loader:
     build:
@@ -179,6 +181,8 @@ services:
     networks:
       - fraud_network
     mem_limit: 2g
+    profiles:
+      - jobs
 
   # Redis — blacklist lookup sub-millisecond (with password protection)
   redis:
