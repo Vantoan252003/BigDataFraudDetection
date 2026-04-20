@@ -209,3 +209,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+ssh-key-2026-04-19.key.pub
+.gitignore
+ssh-key-2026-04-19.key

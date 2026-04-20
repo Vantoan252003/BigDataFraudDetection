@@ -76,20 +76,33 @@ with st.sidebar:
 
     st.divider()
     st.header("📊 Model Info")
-    try:
-        runs = requests.post(
-            f"{MLFLOW_URL}/api/2.0/mlflow/runs/search",
-            json={"experiment_ids": ["0", "1", "2"], "max_results": 1,
-                  "order_by": ["metrics.f1_score DESC"]}
-        ).json()
-        if runs.get("runs"):
-            metrics_list = runs["runs"][0]["data"]["metrics"]
-            metrics = {m["key"]: m["value"] for m in metrics_list}
-            st.metric("F1-Score", f"{metrics.get('f1_score', 0):.4f}")
-            st.metric("AUPRC", f"{metrics.get('auprc', 0):.4f}")
-            st.metric("AUC-ROC", f"{metrics.get('auc_roc', 0):.4f}")
-    except Exception as e:
-        st.info(f"MLflow chưa có model run hoặc lỗi: {e}")
+
+    @st.cache_data(ttl=60)
+    def fetch_mlflow_metrics():
+        try:
+            resp = requests.post(
+                f"{MLFLOW_URL}/api/2.0/mlflow/runs/search",
+                json={"experiment_ids": ["0", "1", "2"], "max_results": 1,
+                      "order_by": ["start_time DESC"]},
+                timeout=5
+            )
+            resp.raise_for_status()
+            runs = resp.json()
+            if runs.get("runs"):
+                metrics_list = runs["runs"][0]["data"]["metrics"]
+                return {m["key"]: m["value"] for m in metrics_list}
+            return None
+        except Exception as e:
+            return {"error": str(e)}
+
+    metrics = fetch_mlflow_metrics()
+    if metrics and "error" not in metrics:
+        st.metric("F1-Score", f"{metrics.get('f1_score', 0):.4f}")
+        st.metric("AUPRC", f"{metrics.get('auprc', 0):.4f}")
+        st.metric("AUC-ROC", f"{metrics.get('auc_roc', 0):.4f}")
+    else:
+        err_msg = metrics.get('error', 'No runs found') if metrics else 'No runs found'
+        st.info(f"Đang chờ MLflow training... ({err_msg})")
 
     st.divider()
     try:

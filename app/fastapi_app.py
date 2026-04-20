@@ -206,15 +206,64 @@ class Transaction(BaseModel):
 
 
 # ── Endpoints ─────────────────────────────────────────────────────
-@app.get("/health")
-def health():
-    """Public health check — không cần API key"""
+
+# Database engine for health dashboard
+_dashboard_engine = None
+def _get_dashboard_engine():
+    global _dashboard_engine
+    if _dashboard_engine is None:
+        db_url = os.getenv("DATABASE_URL", "postgresql://fraud_user:fraud_pass@postgres:5432/fraud_db")
+        from sqlalchemy import create_engine
+        _dashboard_engine = create_engine(db_url, pool_pre_ping=True, pool_recycle=300)
+    return _dashboard_engine
+
+
+@app.get("/health/json")
+def health_json():
+    """JSON health check — cho monitoring tools"""
     return {
         "status": "ok",
         "kafka": "connected" if producer else "disconnected",
         "timestamp": datetime.utcnow().isoformat(),
         "version": "2.0.0",
     }
+
+
+@app.get("/health")
+def health_dashboard():
+    """Rich HTML System Monitoring Dashboard"""
+    from fastapi.responses import HTMLResponse
+    from app.health_dashboard import get_system_metrics, get_container_status, get_db_stats, render_dashboard_html
+    import requests as req
+
+    system = get_system_metrics()
+    containers = get_container_status()
+
+    try:
+        engine = _get_dashboard_engine()
+        db_stats = get_db_stats(engine)
+    except Exception:
+        db_stats = {"total_transactions": 0, "fraud_transactions": 0, "fraud_rate": 0, "last_ingested": "N/A"}
+
+    # Fetch MLflow metrics
+    mlflow_url = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+    try:
+        resp = req.post(
+            f"{mlflow_url}/api/2.0/mlflow/runs/search",
+            json={"experiment_ids": ["0", "1", "2"], "max_results": 1, "order_by": ["start_time DESC"]},
+            timeout=3
+        )
+        runs = resp.json()
+        if runs.get("runs"):
+            metrics_list = runs["runs"][0]["data"]["metrics"]
+            mlflow_metrics = {m["key"]: m["value"] for m in metrics_list}
+        else:
+            mlflow_metrics = {}
+    except Exception:
+        mlflow_metrics = {}
+
+    html = render_dashboard_html(system, containers, db_stats, mlflow_metrics)
+    return HTMLResponse(content=html)
 
 
 @app.post("/transaction")
