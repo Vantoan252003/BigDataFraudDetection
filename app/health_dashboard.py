@@ -6,6 +6,7 @@ import os
 import json
 import docker
 import traceback
+from sqlalchemy import text
 from datetime import datetime
 
 def get_system_metrics():
@@ -79,6 +80,23 @@ def get_container_status():
     except Exception as e:
         print(f"[Dashboard] Docker Error: {e}")
         return []
+
+def get_db_stats(engine):
+    """Lấy thống kê từ PostgreSQL"""
+    try:
+        with engine.connect() as conn:
+            total = conn.execute(text("SELECT COUNT(*) FROM transactions_data")).scalar()
+            fraud = conn.execute(text("SELECT COUNT(*) FROM transactions_data WHERE isFraud = 1")).scalar()
+            last = conn.execute(text("SELECT MAX(timestamp) FROM transactions_data")).scalar()
+            return {
+                "total_transactions": total or 0,
+                "fraud_transactions": fraud or 0,
+                "fraud_rate": round(fraud/total*100, 2) if total and total > 0 else 0,
+                "last_ingested": str(last) if last else "N/A"
+            }
+    except Exception as e:
+        print(f"[Dashboard] DB Error: {e}")
+        return {"total_transactions": 0, "fraud_transactions": 0, "fraud_rate": 0, "last_ingested": "N/A"}
 
 def render_dashboard_html(system, containers, db_stats, mlflow_metrics):
     try:
