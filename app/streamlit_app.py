@@ -120,7 +120,7 @@ with st.sidebar:
     st.divider()
     st.header("⚙️ View Settings")
     auto_refresh = st.checkbox("🔄 Auto-refresh Dashboard", value=True)
-    refresh_interval = st.slider("⏳ Refresh (giây)", 2, 30, 5)
+    refresh_interval = st.slider("⏳ Refresh (giây)", 2, 30, 2)
     st.caption("Tắt auto-refresh khi dùng Explorer/Analytics để tránh bị render lại lúc đang thao tác.")
 
 # ── Metrics Pre-fetch ─────────────────────────────────────────────
@@ -223,6 +223,138 @@ with tab_dashboard:
         )
         fig.update_layout(height=200, margin=dict(t=10, b=10))
         st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+    st.markdown("### 📊 Quick Insights")
+    st.caption("Các biểu đồ dưới đây giúp nhìn nhanh: fraud đang tăng/giảm theo phút, lý do bị chặn, tỷ lệ fraud theo loại giao dịch và phân phối số tiền.")
+
+    qi_col1, qi_col2 = st.columns(2)
+    with qi_col1:
+        st.markdown("**Fraud / Minute (Last 1 hour)**")
+        st.caption("Line chart: mỗi điểm là số giao dịch fraud trong 1 phút gần nhất (không cộng dồn).")
+        with engine.connect() as conn:
+            minute_query = text("""
+                SELECT date_trunc('minute', ingested_at) as minute,
+                       COUNT(*) as fraud_count
+                FROM shop.fraud_transactions
+                WHERE ingested_at >= NOW() - INTERVAL '1 hour'
+                GROUP BY minute
+                ORDER BY minute
+            """)
+            minute_df = pd.read_sql(minute_query, conn)
+        if not minute_df.empty:
+            fig = px.line(
+                minute_df, x="minute", y="fraud_count", markers=True,
+                color_discrete_sequence=["#F44336"],
+                labels={"fraud_count": "Fraud Count", "minute": "Time"},
+            )
+            fig.update_layout(height=260, margin=dict(t=10, b=10))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Chưa có fraud trong 1 giờ gần nhất để vẽ biểu đồ theo phút.")
+
+    with qi_col2:
+        st.markdown("**Fraud Reason Breakdown (Last 1 hour)**")
+        st.caption("Donut chart: tỷ trọng fraud bị chặn bởi Blacklist / Rule-based / ML Model trong 1 giờ gần nhất.")
+        with engine.connect() as conn:
+            reason_query = text("""
+                SELECT
+                    CASE
+                        WHEN blacklist_flag = 1 THEN 'Blacklist'
+                        WHEN rule_fraud_flag = 1 THEN 'Rule-based'
+                        ELSE 'ML Model'
+                    END as reason,
+                    COUNT(*) as fraud_count
+                FROM shop.fraud_transactions
+                WHERE ingested_at >= NOW() - INTERVAL '1 hour'
+                GROUP BY reason
+                ORDER BY fraud_count DESC
+            """)
+            reason_df = pd.read_sql(reason_query, conn)
+        if not reason_df.empty:
+            fig = px.pie(
+                reason_df, names="reason", values="fraud_count", hole=0.55,
+                color="reason",
+                color_discrete_map={"Blacklist": "#F44336", "Rule-based": "#FF9800", "ML Model": "#FFC107"},
+            )
+            fig.update_layout(height=260, margin=dict(t=10, b=10), legend_title_text="Reason")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Chưa có fraud trong 1 giờ gần nhất để thống kê lý do.")
+
+    qi_col3, qi_col4 = st.columns(2)
+    with qi_col3:
+        st.markdown("**Fraud Rate by Transaction Type (Last 24 hours)**")
+        st.caption("Bar chart: tỷ lệ % fraud trên tổng giao dịch theo từng loại (trong 24 giờ gần nhất).")
+        with engine.connect() as conn:
+            try:
+                rate_df = pd.read_sql(text("""
+                    SELECT type,
+                           COUNT(*) as total_count,
+                           SUM(CASE WHEN is_fraud_detected = 1 THEN 1 ELSE 0 END) as fraud_count,
+                           (SUM(CASE WHEN is_fraud_detected = 1 THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0)) as fraud_rate
+                    FROM shop.transactions
+                    WHERE ingested_at >= NOW() - INTERVAL '24 hours'
+                    GROUP BY type
+                    ORDER BY total_count DESC
+                """), conn)
+            except Exception:
+                rate_df = pd.read_sql(text("""
+                    SELECT type,
+                           COUNT(*) as total_count,
+                           SUM(CASE WHEN is_fraud_detected = 1 THEN 1 ELSE 0 END) as fraud_count,
+                           (SUM(CASE WHEN is_fraud_detected = 1 THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0)) as fraud_rate
+                    FROM shop.transactions
+                    GROUP BY type
+                    ORDER BY total_count DESC
+                """), conn)
+        if not rate_df.empty:
+            rate_df["fraud_rate_pct"] = (rate_df["fraud_rate"].fillna(0) * 100).round(3)
+            fig = px.bar(
+                rate_df, x="type", y="fraud_rate_pct",
+                text="fraud_rate_pct",
+                color_discrete_sequence=["#673AB7"],
+                hover_data={"total_count": True, "fraud_count": True, "fraud_rate_pct": True},
+                labels={"type": "Transaction Type", "fraud_rate_pct": "Fraud Rate (%)"},
+            )
+            fig.update_traces(texttemplate="%{text}%", textposition="outside")
+            fig.update_layout(height=260, margin=dict(t=10, b=10))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Không đủ dữ liệu để tính fraud rate theo loại giao dịch.")
+
+    with qi_col4:
+        st.markdown("**Amount Distribution (Last 1 hour, Last 5k rows)**")
+        st.caption("Histogram: phân phối số tiền giao dịch tách Fraud vs Normal (lấy tối đa 5k giao dịch gần nhất trong 1 giờ).")
+        with engine.connect() as conn:
+            try:
+                amount_df = pd.read_sql(text("""
+                    SELECT amount, is_fraud_detected
+                    FROM shop.transactions
+                    WHERE ingested_at >= NOW() - INTERVAL '1 hour' AND amount < 2000000
+                    ORDER BY ingested_at DESC
+                    LIMIT 5000
+                """), conn)
+            except Exception:
+                amount_df = pd.read_sql(text("""
+                    SELECT amount, is_fraud_detected
+                    FROM shop.transactions
+                    WHERE amount < 2000000
+                    ORDER BY amount DESC
+                    LIMIT 5000
+                """), conn)
+        if not amount_df.empty:
+            amount_df["Label"] = amount_df["is_fraud_detected"].apply(lambda x: "Fraud" if x == 1 else "Normal")
+            fig = px.histogram(
+                amount_df, x="amount", color="Label", nbins=50,
+                color_discrete_map={"Normal": "#4CAF50", "Fraud": "#F44336"},
+                barmode="overlay", opacity=0.75,
+                labels={"amount": "Transaction Amount ($)"},
+            )
+            fig.update_layout(height=260, margin=dict(t=10, b=10))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Chưa có dữ liệu giao dịch gần đây để vẽ phân phối amount.")
 
 # ==================================================================
 # TAB 2: EXPLORER  (PARAMETERIZED QUERIES — NO SQL INJECTION)
