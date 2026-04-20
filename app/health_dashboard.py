@@ -1,12 +1,10 @@
 """
 health_dashboard.py — Rich Real-time System Monitoring Dashboard
-Hiển thị CPU, RAM, Disk, Container status, Pipeline metrics...
-Nâng cấp: Tự động cập nhật dữ liệu qua AJAX/Fetch không cần reload.
+Nâng cấp: Sử dụng thư viện 'docker' để fetch info từ socket an toàn hơn.
 """
 import os
-import time
-import subprocess
 import json
+import docker
 from datetime import datetime
 
 def get_system_metrics():
@@ -49,33 +47,34 @@ def get_system_metrics():
     return metrics
 
 def get_container_status():
-    """Lấy chi tiết Docker containers"""
+    """Lấy chi tiết Docker containers bằng thư viện docker (an toàn hơn subprocess)"""
     try:
-        # Lấy thêm Image và CreatedAt
-        fmt = "{{.Names}}|{{.Status}}|{{.Image}}|{{.RunningFor}}"
-        result = subprocess.run(["docker", "ps", "-a", "--format", fmt], capture_output=True, text=True, timeout=5)
+        client = docker.from_env()
         containers = []
-        for line in result.stdout.strip().split("\n"):
-            if not line: continue
-            p = line.split("|")
+        for c in client.containers.list(all=True):
+            # Chỉ lấy các container liên quan đến đồ án (vantoan / bigdata)
+            attrs = c.attrs
+            status = attrs.get('State', {}).get('Status', 'unknown')
+            health = attrs.get('State', {}).get('Health', {}).get('Status', '')
+            
             containers.append({
-                "name": p[0],
-                "status": p[1],
-                "image": p[2] if len(p) > 2 else "unknown",
-                "up_for": p[3] if len(p) > 3 else "N/A",
-                "up": "up" in p[1].lower(),
-                "healthy": "healthy" in p[1].lower()
+                "name": c.name,
+                "status": status,
+                "image": c.image.tags[0] if c.image.tags else "unknown",
+                "up_for": attrs.get('State', {}).get('StartedAt', 'N/A').split('.')[0].replace('T', ' '),
+                "up": status == "running",
+                "healthy": health == "healthy"
             })
         return containers
-    except: return []
+    except Exception as e:
+        print(f"Docker Error: {e}")
+        return []
 
 def render_dashboard_html(system, containers, db_stats, mlflow_metrics):
-    # CSS/HTML template (Real-time version)
     cpu_pct = system.get("cpu_usage", 0)
     ram_pct = system.get("ram_usage_pct", 0)
     disk_pct = system.get("disk_usage_pct", 0)
 
-    # Color logic
     def gc(p): return "#22c55e" if p < 60 else ("#f59e0b" if p < 85 else "#ef4444")
 
     html = f"""<!DOCTYPE html>
@@ -111,49 +110,48 @@ def render_dashboard_html(system, containers, db_stats, mlflow_metrics):
     </div>
 
     <div class="grid">
-        <!-- Resource Cards -->
-        <div class="card" id="cpu-card">
+        <div class="card">
             <div class="card-h">CPU Usage</div>
             <div class="gauge">
                 <svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="none" stroke="#334155" stroke-width="8"/>
-                <circle id="cpu-fill" cx="50" cy="50" r="45" fill="none" stroke="{gc(cpu_pct)}" stroke-width="8" stroke-dasharray="283" stroke-dashoffset="{283 - (283 * cpu_pct / 100)}"/></svg>
-                <div class="gauge-v" id="cpu-val">{cpu_pct}%</div>
+                <circle cx="50" cy="50" r="45" fill="none" stroke="{gc(cpu_pct)}" stroke-width="8" stroke-dasharray="283" stroke-dashoffset="{283 - (283 * cpu_pct / 100)}"/></svg>
+                <div class="gauge-v">{cpu_pct}%</div>
             </div>
         </div>
-        <div class="card" id="ram-card">
+        <div class="card">
             <div class="card-h">RAM Usage</div>
             <div class="gauge">
                 <svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="none" stroke="#334155" stroke-width="8"/>
-                <circle id="ram-fill" cx="50" cy="50" r="45" fill="none" stroke="{gc(ram_pct)}" stroke-width="8" stroke-dasharray="283" stroke-dashoffset="{283 - (283 * ram_pct / 100)}"/></svg>
-                <div class="gauge-v" id="ram-val">{ram_pct}%</div>
+                <circle cx="50" cy="50" r="45" fill="none" stroke="{gc(ram_pct)}" stroke-width="8" stroke-dasharray="283" stroke-dashoffset="{283 - (283 * ram_pct / 100)}"/></svg>
+                <div class="gauge-v">{ram_pct}%</div>
             </div>
-            <p id="ram-sub" style="text-align:center;font-size:0.7rem;color:var(--muted);margin-top:10px">{system.get('ram_used_mb')} / {system.get('ram_total_mb')} MB</p>
+            <p style="text-align:center;font-size:0.7rem;color:var(--muted);margin-top:10px">{system.get('ram_used_mb')} / {system.get('ram_total_mb')} MB</p>
         </div>
         <div class="card">
             <div class="card-h">ML Metrics (Latest)</div>
-            <table id="ml-table">
-                <tr><td>F1-Score</td><td style="color:#22c55e;font-weight:600" id="f1-val">{mlflow_metrics.get('f1_score',0):.4f}</td></tr>
-                <tr><td>AUPRC</td><td id="auprc-val">{mlflow_metrics.get('auprc',0):.4f}</td></tr>
-                <tr><td>AUC-ROC</td><td id="auc-val">{mlflow_metrics.get('auc_roc',0):.4f}</td></tr>
+            <table>
+                <tr><td>F1-Score</td><td style="color:#22c55e;font-weight:600">{mlflow_metrics.get('f1_score',0):.4f}</td></tr>
+                <tr><td>AUPRC</td><td>{mlflow_metrics.get('auprc',0):.4f}</td></tr>
+                <tr><td>AUC-ROC</td><td>{mlflow_metrics.get('auc_roc',0):.4f}</td></tr>
             </table>
         </div>
     </div>
 
     <div class="card" style="margin-top:20px">
-        <div class="card-h">Pipeline & Database</div>
+        <div class="card-h">Pipeline & Database Status</div>
         <div style="display:flex;gap:30px;padding:10px">
-            <div><p style="color:var(--muted);font-size:0.7rem">Total Tx</p><h2 id="total-tx">{db_stats.get('total_transactions',0):,}</h2></div>
-            <div><p style="color:var(--muted);font-size:0.7rem">Fraud Detected</p><h2 id="total-fraud" style="color:#ef4444">{db_stats.get('fraud_transactions',0):,}</h2></div>
-            <div><p style="color:var(--muted);font-size:0.7rem">Last Update</p><p id="last-update" style="font-size:0.85rem">{db_stats.get('last_ingested','N/A')}</p></div>
+            <div><p style="color:var(--muted);font-size:0.7rem">Total Tx</p><h2>{db_stats.get('total_transactions',0):,}</h2></div>
+            <div><p style="color:var(--muted);font-size:0.7rem">Fraud Detected</p><h2 style="color:#ef4444">{db_stats.get('fraud_transactions',0):,}</h2></div>
+            <div><p style="color:var(--muted);font-size:0.7rem">Last Update</p><p style="font-size:0.85rem">{db_stats.get('last_ingested','N/A')}</p></div>
         </div>
     </div>
 
     <div class="card" style="margin-top:20px">
-        <div class="card-h">Docker Containers</div>
-        <table id="container-table">
-            <thead><tr style="text-align:left;color:var(--muted)"><th>Service</th><th>Image</th><th>Status</th><th>Uptime</th></tr></thead>
+        <div class="card-h">Docker Services</div>
+        <table>
+            <thead><tr style="text-align:left;color:var(--muted)"><th>Service</th><th>Image</th><th>Status</th><th>Started At</th></tr></thead>
             <tbody>
-                {"".join([f"<tr><td>{c['name']}</td><td style='font-size:0.7rem;color:var(--muted)'>{c['image']}</td><td><span class='badge {'bg-ok' if c['up'] else 'bg-err'}'>{'Healthy' if c['healthy'] else ('Up' if c['up'] else 'Down')}</span></td><td>{c['up_for']}</td></tr>" for c in containers])}
+                {"".join([f"<tr><td>{c['name']}</td><td style='font-size:0.7rem;color:var(--muted)'>{c['image']}</td><td><span class='badge {'bg-ok' if c['up'] else 'bg-err'}'>{'Healthy' if c['healthy'] else c['status'].upper()}</span></td><td style='font-size:0.7rem'>{c['up_for']}</td></tr>" for c in (containers or [])])}
             </tbody>
         </table>
     </div>
@@ -165,20 +163,6 @@ def render_dashboard_html(system, containers, db_stats, mlflow_metrics):
     </div>
 
     <script>
-        async function updateMetrics() {{
-            try {{
-                const r = await fetch('/health/json');
-                if(!r.ok) return;
-                
-                // Note: /health/json currently only returns basic status. 
-                // We should expand it or use a separate internal endpoint.
-                // For demo, we'll fetch a new full refresh JSON if we add an endpoint.
-                // Since I haven't added a full JSON endpoint yet, I'll reload parts or 
-                // just stick to 5s interval for now.
-                // IDEAL: fetch('/health/api').then(res => res.json()).then(data => updateDOM(data))
-            }} catch(e) {{}}
-        }}
-        // Refresh every 5 seconds instead of 30
         setInterval(() => location.reload(), 5000);
     </script>
 </body></html>"""
