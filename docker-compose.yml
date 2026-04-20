@@ -71,14 +71,13 @@ services:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - REDIS_HOST=${REDIS_HOST:-fraud_redis}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-http://mlflow:5000}
       - FASTAPI_URL=http://fraud_fastapi:8000
-      - FRAUD_API_KEY=${FRAUD_API_KEY}
     volumes:
       - ./scripts:/app/scripts
       - ./security:/app/security
       - ./app/streamlit_app.py:/app/app/streamlit_app.py
+      - ./app/health_dashboard.py:/app/app/health_dashboard.py
     depends_on:
       postgres:
         condition: service_healthy
@@ -123,10 +122,7 @@ services:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - KAFKA_TOPIC=${KAFKA_TOPIC:-transactions-data}
       - POSTGRES_URL=jdbc:postgresql://postgres:5432/${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - REDIS_HOST=${REDIS_HOST:-fraud_redis}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
     volumes:
       - ./jobs:/app/jobs
     depends_on:
@@ -171,7 +167,6 @@ services:
     environment:
       - PAYSIM_PATH=${PAYSIM_PATH:-data/paysim.csv}
       - REDIS_HOST=${REDIS_HOST:-fraud_redis}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
     volumes:
       - ./scripts:/app/scripts
       - ./data:/app/data:ro
@@ -251,13 +246,13 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: ${KAFKA_TOPIC:-transactions-data}
-      FRAUD_API_KEY: ${FRAUD_API_KEY}
-      SECRET_KEY: ${SECRET_KEY}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     volumes:
       - ./scripts:/app/scripts
       - ./security:/app/security
       - ./app/fastapi_app.py:/app/fastapi_app.py
+      - ./app/health_dashboard.py:/app/app/health_dashboard.py
+      - ./app/__init__.py:/app/app/__init__.py
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       kafka:
