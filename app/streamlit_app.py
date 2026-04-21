@@ -73,6 +73,39 @@ with st.sidebar:
                 st.error(f"Lỗi: {resp.status_code}")
         except Exception as e:
             st.error(f"Không kết nối được FastAPI: {e}")
+            
+    st.divider()
+    st.header("⏯️ Điều Khiển Trình Giả Lập")
+    colA, colB = st.columns(2)
+    if colA.button("⏸️ Tạm Dừng", use_container_width=True):
+        try:
+            headers = {"X-API-Key": API_KEY} if API_KEY else {}
+            resp = requests.post(f"{FASTAPI_URL}/producer/pause", headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("status") == "already_paused":
+                    st.info("Đã dừng trước đó!")
+                else:
+                    st.success("✅ Đã dừng!")
+            else:
+                st.error(f"Lỗi: {resp.text}")
+        except Exception as e:
+            st.error(f"Lỗi: {e}")
+
+    if colB.button("▶️ Tiếp Tục", use_container_width=True):
+        try:
+            headers = {"X-API-Key": API_KEY} if API_KEY else {}
+            resp = requests.post(f"{FASTAPI_URL}/producer/resume", headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("status") == "already_running":
+                    st.info("Đang chạy bình thường!")
+                else:
+                    st.success("✅ Đã tiếp tục!")
+            else:
+                st.error(f"Lỗi: {resp.text}")
+        except Exception as e:
+            st.error(f"Lỗi: {e}")
 
     st.divider()
     st.header("📊 Thông Tin Mô Hình (ML)")

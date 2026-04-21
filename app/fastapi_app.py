@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from typing import Literal
 import uvicorn
+import docker
 
 # ── Logging ───────────────────────────────────────────────────────
 logging.basicConfig(
@@ -317,6 +318,57 @@ def send_blacklisted_transaction(api_key: str = Depends(verify_api_key)):
             status_code=503,
             detail="Failed to send transaction. Please try again later.",
         )
+
+
+@app.post("/producer/pause")
+def pause_producer(api_key: str = Depends(verify_api_key)):
+    """Tạm dừng container tạo giao dịch (Producer)"""
+    try:
+        client = docker.from_env()
+        containers = client.containers.list(filters={"name": "producer-1"})
+        if not containers:
+            raise HTTPException(status_code=404, detail="Không tìm thấy tiến trình tạo giao dịch")
+        
+        container = containers[0]
+        if container.status == 'paused':
+            return {"status": "already_paused", "message": "Tiến trình đã bị tạm dừng trước đó!"}
+        
+        container.pause()
+        return {"status": "paused", "message": "Đã tạm dừng giả lập giao dịch!"}
+    except Exception as e:
+        logger.error(f"Lỗi khi dừng producer: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/producer/resume")
+def resume_producer(api_key: str = Depends(verify_api_key)):
+    """Tiếp tục container tạo giao dịch (Producer)"""
+    try:
+        client = docker.from_env()
+        containers = client.containers.list(filters={"name": "producer-1"})
+        if not containers:
+            raise HTTPException(status_code=404, detail="Không tìm thấy tiến trình tạo giao dịch")
+        
+        container = containers[0]
+        if container.status == 'running':
+            return {"status": "already_running", "message": "Tiến trình đang chạy bình thường!"}
+        
+        container.unpause()
+        return {"status": "running", "message": "Đã tiếp tục giả lập giao dịch!"}
+    except Exception as e:
+        logger.error(f"Lỗi khi tiếp tục producer: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/producer/status")
+def status_producer():
+    """Lấy trạng thái hiện tại của producer"""
+    try:
+        client = docker.from_env()
+        containers = client.containers.list(all=True, filters={"name": "producer-1"})
+        if not containers:
+            return {"status": "not_found"}
+        return {"status": containers[0].status}
+    except Exception as e:
+        return {"status": "unknown", "error": str(e)}
 
 
 if __name__ == "__main__":
