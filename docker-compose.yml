@@ -323,13 +323,7 @@ services:
     command: >
       bash -c "
         airflow db migrate &&
-        airflow users create
-          --username admin
-          --password admin
-          --firstname Fraud
-          --lastname Admin
-          --role Admin
-          --email admin@fraud.local
+        airflow users create --username admin --password admin --firstname Fraud --lastname Admin --role Admin --email admin@fraud.local
       "
     env_file: .env
     environment:
