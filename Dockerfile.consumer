@@ -21,11 +21,21 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Download required JAR files for Spark directly into py4j/pyspark jar folder to avoid classpath issues
 RUN mkdir -p /usr/local/lib/python3.10/site-packages/pyspark/jars && \
+    # ── Kafka connectors (existing) ──────────────────────────────────
     curl -o /usr/local/lib/python3.10/site-packages/pyspark/jars/spark-sql-kafka-0-10_2.12-3.5.0.jar https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/3.5.0/spark-sql-kafka-0-10_2.12-3.5.0.jar && \
     curl -o /usr/local/lib/python3.10/site-packages/pyspark/jars/kafka-clients-3.4.1.jar https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.4.1/kafka-clients-3.4.1.jar && \
     curl -o /usr/local/lib/python3.10/site-packages/pyspark/jars/commons-pool2-2.11.1.jar https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.11.1/commons-pool2-2.11.1.jar && \
     curl -o /usr/local/lib/python3.10/site-packages/pyspark/jars/spark-token-provider-kafka-0-10_2.12-3.5.0.jar https://repo1.maven.org/maven2/org/apache/spark/spark-token-provider-kafka-0-10_2.12/3.5.0/spark-token-provider-kafka-0-10_2.12-3.5.0.jar && \
-    curl -o /usr/local/lib/python3.10/site-packages/pyspark/jars/postgresql-42.6.0.jar https://jdbc.postgresql.org/download/postgresql-42.6.0.jar
+    curl -o /usr/local/lib/python3.10/site-packages/pyspark/jars/postgresql-42.6.0.jar https://jdbc.postgresql.org/download/postgresql-42.6.0.jar && \
+    # ── Delta Lake (NEW) ─────────────────────────────────────────────
+    # delta-spark: core Delta Lake library cho Spark 3.5
+    curl -o /usr/local/lib/python3.10/site-packages/pyspark/jars/delta-spark_2.12-3.2.0.jar https://repo1.maven.org/maven2/io/delta/delta-spark_2.12/3.2.0/delta-spark_2.12-3.2.0.jar && \
+    curl -o /usr/local/lib/python3.10/site-packages/pyspark/jars/delta-storage-3.2.0.jar https://repo1.maven.org/maven2/io/delta/delta-storage/3.2.0/delta-storage-3.2.0.jar && \
+    # ── Hadoop AWS S3A connector (NEW) — để ghi Delta vào MinIO ─────
+    # hadoop-aws: S3A FileSystem implementation
+    curl -o /usr/local/lib/python3.10/site-packages/pyspark/jars/hadoop-aws-3.3.4.jar https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar && \
+    # aws-java-sdk-bundle: credentials provider, S3 client
+    curl -o /usr/local/lib/python3.10/site-packages/pyspark/jars/aws-java-sdk-bundle-1.12.262.jar https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar
 
 COPY . /app/
 

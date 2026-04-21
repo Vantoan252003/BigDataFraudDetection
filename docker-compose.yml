@@ -272,9 +272,151 @@ services:
       timeout: 10s
       retries: 3
 
+  # ── MinIO: S3-compatible object storage cho Delta Lake ────────────
+  minio:
+    image: minio/minio:RELEASE.2024-06-04T19-20-08Z
+    container_name: fraud_minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9002:9000"    # S3 API (dùng 9002 tránh conflict với Kafdrop)
+      - "9001:9001"    # MinIO Console UI
+    env_file: .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    volumes:
+      - minio_data:/data
+    networks:
+      - fraud_network
+    restart: unless-stopped
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # One-shot: tạo buckets fraud-lakehouse, mlflow-artifacts, spark-checkpoints
+  minio-init:
+    image: minio/mc:latest
+    container_name: fraud_minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./docker/minio-init.sh:/init.sh:ro
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    entrypoint: ["/bin/sh", "/init.sh"]
+    networks:
+      - fraud_network
+    restart: no
+
+  # ── Apache Airflow ─────────────────────────────────────────────────
+  # Khởi tạo DB + tạo user admin — chạy 1 lần rồi exit
+  airflow-init:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    container_name: airflow_init
+    command: >
+      bash -c "
+        airflow db migrate &&
+        airflow users create
+          --username admin
+          --password admin
+          --firstname Fraud
+          --lastname Admin
+          --role Admin
+          --email admin@fraud.local
+      "
+    env_file: .env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow_db
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - fraud_network
+    restart: no
+
+  # Airflow Webserver — UI tại http://localhost:8080
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    container_name: airflow_webserver
+    command: airflow webserver
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow_db
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${SECRET_KEY}
+      # Env vars truyền cho DAGs
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - airflow_logs:/opt/airflow/logs
+      - /var/run/docker.sock:/var/run/docker.sock  # Cho phép DAG chạy docker exec
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - fraud_network
+    restart: unless-stopped
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Airflow Scheduler — điều phối và kích hoạt các DAG tasks
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    container_name: airflow_scheduler
+    command: airflow scheduler
+    env_file: .env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow_db
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - airflow_logs:/opt/airflow/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - fraud_network
+    restart: unless-stopped
+    mem_limit: 1g
+
 networks:
   fraud_network:
     driver: bridge
 
 volumes:
   postgres_data:
+  minio_data:
+  airflow_logs:

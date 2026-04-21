@@ -1,0 +1,93 @@
+name: 🚀 CD — Build & Push Docker Images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Cho phép chạy thủ công từ GitHub UI
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/fraud-detection
+
+jobs:
+  build-and-push:
+    name: Build & Push to GitHub Container Registry
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # Cần để push lên ghcr.io
+
+    strategy:
+      matrix:
+        include:
+          - image: consumer
+            dockerfile: Dockerfile.consumer
+            context: .
+          - image: fastapi
+            dockerfile: Dockerfile.fastapi
+            context: .
+          - image: airflow
+            dockerfile: airflow/Dockerfile
+            context: .
+
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔑 Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🏷️ Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: 🐳 Set up Docker Buildx (multi-platform cache)
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔨 Build & Push ${{ matrix.image }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Layer caching để build nhanh hơn lần sau (~70% faster)
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Job tùy chọn: SSH deploy lên VPS nếu user đã set secret SSH_HOST
+  deploy-to-vps:
+    name: 🌐 Deploy to VPS (Optional)
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    # Chỉ chạy nếu user đã đặt SSH_HOST secret
+    if: ${{ secrets.SSH_HOST != '' }}
+
+    steps:
+      - name: 🔑 Add SSH Key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: 🚀 Pull Latest Images & Restart Services
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+            cd ${{ secrets.PROJECT_PATH }}
+            # Login vào ghcr.io trên server
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            # Pull images mới nhất
+            docker compose pull consumer fastapi airflow-webserver airflow-scheduler
+            # Restart services với zero-downtime trick
+            docker compose up -d --no-deps --force-recreate consumer fastapi airflow-webserver airflow-scheduler
+            echo "✅ Deployment complete!"
+          EOF

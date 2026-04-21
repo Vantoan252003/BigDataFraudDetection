@@ -1,6 +1,9 @@
 """
 transaction_consumer.py — Spark Structured Streaming Consumer
-Đọc từ Kafka, áp dụng blacklist check + ML scoring, ghi ra PostgreSQL
+Đọc từ Kafka, áp dụng blacklist check + ML scoring.
+Dual-write output:
+  - PostgreSQL: real-time dashboard (Streamlit)
+  - Delta Lake (MinIO): scalable analytical storage, ACID, time-travel
 """
 import os
 import shutil
@@ -16,6 +19,7 @@ from pyspark.sql.types import (
     StructType, StructField, StringType, DoubleType, IntegerType, LongType
 )
 from pyspark.ml import PipelineModel
+from jobs.delta_writer import configure_spark_for_delta, write_delta_batch
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -73,7 +77,11 @@ def run_streaming():
         .appName("FraudDetectionConsumer") \
         .config("spark.sql.shuffle.partitions", "8") \
         .config("spark.streaming.stopGracefullyOnShutdown", "true") \
+        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
         .getOrCreate()
+    # Kết nối MinIO cho Delta Lake writes
+    configure_spark_for_delta(spark)
     spark.sparkContext.setLogLevel("WARN")
 
     # ── Load model (đã train bằng PaySim dataset) ─────────────
@@ -141,17 +149,28 @@ def run_streaming():
             ).otherwise(0)
         )
 
-    # ── Ghi tất cả giao dịch ra PostgreSQL ───────────────────────
+    # ── Dual-write: PostgreSQL (real-time) + Delta Lake (analytical) ─────
+    def write_all_transactions(df, batch_id):
+        """Ghi tất cả giao dịch: PostgreSQL cho dashboard + Delta Lake cho analytics"""
+        write_batch_to_postgres(df, batch_id, "transactions")
+        write_delta_batch(df, batch_id, "transactions", partition_cols=["type"])
+
     query_all = detected.writeStream \
-        .foreachBatch(lambda df, id: write_batch_to_postgres(df, id, "transactions")) \
+        .foreachBatch(write_all_transactions) \
         .outputMode("append") \
         .option("checkpointLocation", CHECKPOINT_PATH + "/all") \
         .start()
 
-    # ── Ghi giao dịch gian lận ra PostgreSQL ─────────────────────
+    # ── Dual-write fraud transactions ────────────────────────────────────
     fraud_df = detected.filter(col("is_fraud_detected") == 1)
+
+    def write_fraud_transactions(df, batch_id):
+        """Ghi giao dịch gian lận: PostgreSQL cho alerts + Delta Lake cho audit trail"""
+        write_batch_to_postgres(df, batch_id, "fraud_transactions")
+        write_delta_batch(df, batch_id, "fraud_transactions")
+
     query_fraud = fraud_df.writeStream \
-        .foreachBatch(lambda df, id: write_batch_to_postgres(df, id, "fraud_transactions")) \
+        .foreachBatch(write_fraud_transactions) \
         .outputMode("append") \
         .option("checkpointLocation", CHECKPOINT_PATH + "/fraud") \
         .start()
