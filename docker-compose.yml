@@ -127,6 +127,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - REDIS_HOST=${REDIS_HOST:-fraud_redis}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - PYTHONPATH=/app
     volumes:
       - ./jobs:/app/jobs
     depends_on:
@@ -150,6 +151,7 @@ services:
     environment:
       - PAYSIM_PATH=${PAYSIM_PATH:-data/paysim.csv}
       - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-http://mlflow:5000}
+      - PYTHONPATH=/app
     volumes:
       - ./scripts:/app/scripts
       - ./data:/app/data:ro
@@ -172,6 +174,7 @@ services:
       - PAYSIM_PATH=${PAYSIM_PATH:-data/paysim.csv}
       - REDIS_HOST=${REDIS_HOST:-fraud_redis}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - PYTHONPATH=/app
     volumes:
       - ./scripts:/app/scripts
       - ./data:/app/data:ro
@@ -267,7 +270,7 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
