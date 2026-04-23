@@ -12,7 +12,7 @@
 5. [So sánh Trước/Sau](#5-so-sánh-trướcsau)
 6. [Hướng dẫn khởi chạy](#6-hướng-dẫn-khởi-chạy)
 7. [Luồng hoạt động sau nâng cấp](#7-luồng-hoạt-động-sau-nâng-cấp)
-8. [Cloud Deployment](#8-cloud-deployment)
+8. [Giải Thích Dashboards (Dành cho báo cáo)](#8-giải-thích-dashboards-dành-cho-báo-cáo)
 
 ---
 
@@ -29,18 +29,18 @@
                     │  Kafka: transactions│  Buffer trung gian
                     └──────┬──────────────┘
                            │
-         ┌─────────────────▼──────────────────────┐
-         │        PySpark Structured Streaming     │
-         │  Lớp 1: Redis Blacklist (<1ms)          │
-         │  Lớp 2: Rule Engine                     │
-         │  Lớp 3: ML Model (Random Forest)        │
-         └──────┬──────────────┬───────────────────┘
-                │              │
-                │    ┌─────────▼────────┐
-                │    │  Kafka           │
-                │    │  fraud-alerts    │  Chỉ gian lận
-                │    └──────────────────┘
-                │
+          ┌─────────────────▼──────────────────────┐
+          │        PySpark Structured Streaming     │
+          │  Lớp 1: Redis Blacklist (<1ms)          │
+          │  Lớp 2: Rule Engine                     │
+          │  Lớp 3: ML Model (Random Forest)        │
+          └──────┬──────────────┬───────────────────┘
+                 │              │
+                 │    ┌─────────▼────────┐
+                 │    │  Kafka           │
+                 │    │  fraud-alerts    │  Chỉ gian lận
+                 │    └──────────────────┘
+                 │
         ┌───────▼─────────────────────────────────────┐
         │           Dual-Write Output (MỚI)            │
         │                                              │
@@ -302,41 +302,28 @@ Airflow Scheduler (cron)
 
 ---
 
-## 8. Cloud Deployment
+## 8. Giải Thích Dashboards (Dành cho báo cáo/thuyết trình)
 
-### Cách Đơn Giản Nhất: Dùng ghcr.io Images (Sau khi push lên main)
+Khi mở các trang quản trị, bạn có thể giải thích theo các ý chính sau để làm nổi bật tính "Big Data" của đồ án:
 
-```yaml
-# Trên VPS của bạn, sửa docker-compose.yml để dùng pre-built images
-services:
-  transaction_consumer:
-    image: ghcr.io/YOUR_USERNAME/fraud-detection-consumer:latest
-    # Xóa build: block
-```
+### ✈️ Apache Airflow (Cổng 8080) — "Bộ Não Điều Phối"
 
-### Cấu Hình Auto-Deploy
+*   **Câu hỏi: "Đây là gì?"**
+    *   Trả lời: Đây là Apache Airflow, công cụ điều phối (Orchestration) hàng đầu thế giới. Nó giúp tự động hóa các tác vụ lặp đi lặp lại thay vì phải chạy bằng tay.
+*   **Các thành phần chính:**
+    *   **DAGs (Directed Acyclic Graphs):** Là các biểu đồ công việc. Mỗi dòng bạn thấy (`blacklist_daily_refresh`,...) là một quy trình tự động.
+    *   **Giao diện Graph/Grid:** Cho thấy lịch sử chạy của các tác vụ. Màu xanh lá cây là thành công, màu đỏ là thất bại (Airflow sẽ tự động retry nếu lỗi).
+*   **Giá trị Big Data:** Trong thực tế, dữ liệu đổ về liên tục. Airflow đảm bảo mô hình AI luôn được học mới (`retrain`) và dữ liệu cũ được dọn dẹp (`compaction`) mà không cần con người can thiệp.
 
-Thêm các secrets sau vào GitHub repository (`Settings → Secrets → Actions`):
+### 🗄️ MinIO Console (Cổng 9001) — "Hồ Dữ Liệu (Data Lakehouse)"
 
-| Secret | Giá trị |
-|---|---|
-| `SSH_HOST` | IP của VPS (VD: `123.456.789.0`) |
-| `SSH_USER` | Username SSH (VD: `ubuntu`) |
-| `SSH_PRIVATE_KEY` | Nội dung private key (từ file `.pem`) |
-| `PROJECT_PATH` | Đường dẫn project trên VPS (VD: `/home/ubuntu/FraudDetectionSystem`) |
-
-Sau khi cấu hình, **mỗi lần `git push origin main` → GitHub Actions tự động deploy lên server**.
-
-### Providers Miễn Phí Gợi Ý
-
-| Provider | Free Tier | Phù Hợp Cho |
-|---|---|---|
-| **Oracle Cloud** | VM 4 vCPU + 24GB RAM (**vĩnh viễn miễn phí**) | Chạy full stack |
-| **fly.io** | 3 shared VMs miễn phí | FastAPI + Streamlit |
-| **Railway** | $5 credit/tháng | Demo nhanh |
-| **Render** | Free web service | FastAPI only |
-
-> 💡 **Gợi ý cho sinh viên:** Oracle Cloud Free Tier (Always Free) đủ mạnh để chạy toàn bộ stack gồm Kafka, Spark, PostgreSQL, MinIO, và Airflow. Đây là lựa chọn tốt nhất cho demo đồ án.
+*   **Câu hỏi: "MinIO UI (9001) khác gì MinIO S3 (9002/9000)?"**
+    *   **MinIO UI (9001):** Là giao diện dành cho quản trị viên (Admin). Bạn vào đây để tạo thùng chứa (`Buckets`), xem file, và kiểm tra dung lượng. Nó giống như trang web quản lý Google Drive.
+    *   **MinIO S3 (9000/9002):** Là "cổng API" dành cho máy móc. Spark và Airflow sẽ nói chuyện với MinIO qua cổng này bằng giao thức S3. Người dùng không vào đây bằng trình duyệt.
+*   **Trong bucket `fraud-lakehouse` có gì?**
+    *   Bạn sẽ thấy thư mục `transactions/`. Đây chính là **Delta Table**.
+    *   **Thư mục `_delta_log/`:** Chứa file JSON ghi lại lịch sử mọi lần ghi dữ liệu. Đây là "bí mật" giúp Delta Lake có tính năng **Time Travel** (quay ngược thời gian) và **ACID** (không bao giờ bị mất/lỗi dữ liệu khi đang ghi).
+    *   **Các file `.parquet`:** Dữ liệu thực tế được nén dưới dạng cột (Columnar format). Nó giúp Spark đọc dữ liệu nhanh gấp 10-100 lần so với file CSV thông thường.
 
 ---
 
