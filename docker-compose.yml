@@ -117,6 +117,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.consumer
+    container_name: transaction_consumer
     command: spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.postgresql:postgresql:42.6.0 jobs/transaction_consumer.py
     env_file: .env
     environment:
@@ -146,6 +147,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.consumer
+    container_name: trainer
     command: spark-submit scripts/train_paysim_model.py
     env_file: .env
     environment:
@@ -168,6 +170,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.consumer
+    container_name: blacklist_loader
     command: spark-submit scripts/blacklist_loader.py
     env_file: .env
     environment:
@@ -323,6 +326,7 @@ services:
       context: .
       dockerfile: airflow/Dockerfile
     container_name: airflow_init
+    user: root
     command: >
       bash -c "
         airflow db migrate &&
@@ -350,6 +354,7 @@ services:
       context: .
       dockerfile: airflow/Dockerfile
     container_name: airflow_webserver
+    user: root
     command: airflow webserver
     ports:
       - "8080:8080"
@@ -387,6 +392,7 @@ services:
       context: .
       dockerfile: airflow/Dockerfile
     container_name: airflow_scheduler
+    user: root
     command: airflow scheduler
     env_file: .env
     environment:
