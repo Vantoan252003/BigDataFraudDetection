@@ -46,7 +46,7 @@ with DAG(
         optimize = BashOperator(
             task_id=f"optimize_{table}",
             bash_command=(
-                f"docker exec transaction_consumer "
+                f"docker exec trainer "
                 f"python3 -c \""
                 f"from pyspark.sql import SparkSession; "
                 f"from jobs.delta_writer import configure_spark_for_delta, run_optimize; "
@@ -65,7 +65,7 @@ with DAG(
         vacuum = BashOperator(
             task_id=f"vacuum_{table}",
             bash_command=(
-                f"docker exec transaction_consumer "
+                f"docker exec trainer "
                 f"python3 -c \""
                 f"from pyspark.sql import SparkSession; "
                 f"from jobs.delta_writer import configure_spark_for_delta, run_vacuum; "
