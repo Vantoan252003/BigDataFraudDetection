@@ -115,8 +115,12 @@ with st.sidebar:
         try:
             resp = requests.post(
                 f"{MLFLOW_URL}/api/2.0/mlflow/runs/search",
-                json={"experiment_ids": ["0", "1", "2"], "max_results": 1,
-                      "order_by": ["start_time DESC"]},
+                json={
+                    "experiment_ids": ["0", "1", "2"],
+                    "max_results": 1,
+                    "order_by": ["start_time DESC"],
+                    "filter": "attributes.status = 'FINISHED'"  # Chỉ lấy model đã train xong
+                },
                 timeout=30
             )
             resp.raise_for_status()

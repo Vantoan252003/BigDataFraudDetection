@@ -17,7 +17,7 @@ default_args = {
     "depends_on_past": False,
     "start_date": datetime(2025, 1, 1),
     "email_on_failure": False,
-    "retries": 1,
+    "retries": 0,  # Không retry — training nặng, OOM retry chỉ gây loop
     "retry_delay": timedelta(minutes=10),
 }
 
