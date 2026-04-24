@@ -397,61 +397,157 @@ with tab_explorer:
 # TAB 3: ANALYTICS
 # ==================================================================
 with tab_analytics:
-    st.markdown("### 📊 Thống Kê Phân Tích Chuyên Sâu")
+    st.markdown("### Thong Ke Phan Tich Chuyen Sau")
 
-    col_ch1, col_ch2 = st.columns(2)
-
-    with col_ch1:
-        st.markdown("**Phân Bố Giá Trị Số Tiền (Gian Lận vs Bình Thường)**")
+    @st.fragment(run_every="10s")
+    def render_analytics():
         with engine.connect() as conn:
-            hist_df = pd.read_sql(text("""
-                SELECT amount, is_fraud_detected
-                FROM shop.transactions
-                WHERE amount < 2000000
-                ORDER BY RANDOM()
-                LIMIT 15000
-            """), conn)
-        if not hist_df.empty:
-            hist_df["Loại"] = hist_df["is_fraud_detected"].apply(lambda x: "Là Gian Lận" if x == 1 else "Bình Thường")
-            fig_hist = px.histogram(
-                hist_df, x="amount", color="Loại", nbins=50,
-                color_discrete_map={"Bình Thường": "#4CAF50", "Là Gian Lận": "#F44336"},
-                barmode="overlay", opacity=0.75, range_x=[0, 1000000],
-                labels={"amount": "Số Tiền Giao Dịch ($)", "count": "Số Lượng"}
-            )
-            fig_hist.update_layout(margin=dict(t=10), legend_title_text='')
-            st.plotly_chart(fig_hist, use_container_width=True)
+            total = conn.execute(text("SELECT COUNT(*) FROM shop.transactions")).scalar() or 0
+            fraud_total = conn.execute(text("SELECT COUNT(*) FROM shop.fraud_transactions")).scalar() or 0
+            bl_count = conn.execute(text("SELECT COALESCE(SUM(blacklist_flag),0) FROM shop.fraud_transactions")).scalar() or 0
+            rule_count = conn.execute(text("SELECT COALESCE(SUM(rule_fraud_flag),0) FROM shop.fraud_transactions")).scalar() or 0
+            avg_fraud_amt = conn.execute(text("SELECT COALESCE(AVG(amount),0) FROM shop.fraud_transactions")).scalar() or 0
+            avg_normal_amt = conn.execute(text("SELECT COALESCE(AVG(amount),0) FROM shop.transactions WHERE is_fraud_detected=0")).scalar() or 0
 
-    with col_ch2:
-        st.markdown("**Số Lần Gian Lận Theo Khung Giờ (Chu kỳ 24 Khung)**")
+        ml_count = max(0, int(fraud_total) - int(bl_count) - int(rule_count))
+        fraud_rate = (fraud_total / total * 100) if total > 0 else 0
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Tong Giao Dich", f"{total:,}")
+        c2.metric("Ty Le Gian Lan", f"{fraud_rate:.3f}%")
+        c3.metric("TB GD Gian Lan", f"${avg_fraud_amt:,.0f}")
+        c4.metric("TB GD Binh Thuong", f"${avg_normal_amt:,.0f}")
+
+        st.divider()
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown("**Dong Ho Ty Le Gian Lan**")
+            fig_gauge = go.Figure(go.Indicator(
+                mode="gauge+number", value=round(fraud_rate, 3),
+                number={"suffix": "%", "font": {"size": 36}},
+                gauge={
+                    "axis": {"range": [0, 5], "tickformat": ".2f"},
+                    "bar": {"color": "#F44336"},
+                    "steps": [{"range": [0, 1], "color": "#C8E6C9"}, {"range": [1, 2.5], "color": "#FFF9C4"}, {"range": [2.5, 5], "color": "#FFCDD2"}],
+                }
+            ))
+            fig_gauge.update_layout(height=280, margin=dict(t=20, b=0, l=20, r=20))
+            st.plotly_chart(fig_gauge, use_container_width=True)
+
+        with col_b:
+            st.markdown("**Phan Loai Nguon Phat Hien**")
+            if fraud_total > 0:
+                fig_pie = px.pie(
+                    names=["So Den (Blacklist)", "Quy Tac (Rule)", "AI Model (ML)"],
+                    values=[int(bl_count), int(rule_count), ml_count],
+                    color=["So Den (Blacklist)", "Quy Tac (Rule)", "AI Model (ML)"],
+                    color_discrete_map={"So Den (Blacklist)": "#F44336", "Quy Tac (Rule)": "#FF9800", "AI Model (ML)": "#2196F3"},
+                    hole=0.4,
+                )
+                fig_pie.update_layout(height=280, margin=dict(t=20, b=0), legend_title_text="")
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+        st.divider()
+
+        col_c, col_d = st.columns(2)
+        with col_c:
+            st.markdown("**Khoi Luong Giao Dich Theo Phut (2 Gio Qua)**")
+            with engine.connect() as conn:
+                vol_df = pd.read_sql(text("""
+                    SELECT date_trunc('minute', ingested_at) as phut,
+                           COUNT(*) as total, SUM(is_fraud_detected) as fraud
+                    FROM shop.transactions
+                    WHERE ingested_at >= NOW() - INTERVAL '2 hours'
+                    GROUP BY phut ORDER BY phut
+                """), conn)
+            if not vol_df.empty:
+                fig_vol = go.Figure()
+                fig_vol.add_trace(go.Scatter(x=vol_df["phut"], y=vol_df["total"], name="Binh Thuong", fill="tozeroy", line={"color": "#4CAF50", "width": 1.5}))
+                fig_vol.add_trace(go.Scatter(x=vol_df["phut"], y=vol_df["fraud"], name="Gian Lan", fill="tozeroy", line={"color": "#F44336", "width": 1.5}))
+                fig_vol.update_layout(height=260, margin=dict(t=10, b=10), legend_title_text="")
+                st.plotly_chart(fig_vol, use_container_width=True)
+            else:
+                st.info("Chua co du lieu 2 gio qua.")
+
+        with col_d:
+            st.markdown("**Gian Lan Theo Loai Giao Dich**")
+            with engine.connect() as conn:
+                type_df = pd.read_sql(text("SELECT type, COUNT(*) as fraud_count, SUM(amount) as total_amount FROM shop.fraud_transactions GROUP BY type ORDER BY fraud_count DESC"), conn)
+            if not type_df.empty:
+                fig_type = px.bar(type_df, x="type", y="fraud_count", color="total_amount", color_continuous_scale="Reds",
+                                  labels={"type": "Loai Giao Dich", "fraud_count": "So Lan Gian Lan", "total_amount": "Tong Tien"})
+                fig_type.update_layout(height=260, margin=dict(t=10, b=10), coloraxis_showscale=False)
+                st.plotly_chart(fig_type, use_container_width=True)
+
+        st.divider()
+
+        col_e, col_f = st.columns(2)
+        with col_e:
+            st.markdown("**Phan Bo Gia Tri So Tien (Box Plot)**")
+            with engine.connect() as conn:
+                hist_df = pd.read_sql(text("SELECT amount, is_fraud_detected FROM shop.transactions WHERE amount < 2000000 ORDER BY RANDOM() LIMIT 15000"), conn)
+            if not hist_df.empty:
+                hist_df["Loai"] = hist_df["is_fraud_detected"].apply(lambda x: "Gian Lan" if x == 1 else "Binh Thuong")
+                fig_box = px.box(hist_df, x="Loai", y="amount", color="Loai",
+                                 color_discrete_map={"Binh Thuong": "#4CAF50", "Gian Lan": "#F44336"},
+                                 labels={"amount": "So Tien ($)"}, points=False)
+                fig_box.update_layout(height=280, margin=dict(t=10, b=10), showlegend=False)
+                st.plotly_chart(fig_box, use_container_width=True)
+
+        with col_f:
+            st.markdown("**Mat Do Gian Lan Theo Khung Gio (Heatmap)**")
+            with engine.connect() as conn:
+                hour_df = pd.read_sql(text("SELECT MOD(step,24) as gio, type, COUNT(*) as fraud_count FROM shop.fraud_transactions GROUP BY gio, type ORDER BY gio"), conn)
+            if not hour_df.empty:
+                pivot = hour_df.pivot_table(index="type", columns="gio", values="fraud_count", fill_value=0)
+                fig_heat = px.imshow(pivot, color_continuous_scale="Reds",
+                                     labels={"x": "Khung Gio (0-23)", "y": "Loai GD", "color": "So Lan"}, aspect="auto")
+                fig_heat.update_layout(height=280, margin=dict(t=10, b=10))
+                st.plotly_chart(fig_heat, use_container_width=True)
+
+        st.divider()
+
+        col_g, col_h = st.columns(2)
+        with col_g:
+            st.markdown("**Top 10 Tai Khoan Nhan Gian Lan Nhieu Nhat**")
+            with engine.connect() as conn:
+                top_dest = pd.read_sql(text('SELECT "nameDest", COUNT(*) as so_lan, SUM(amount) as tong_tien FROM shop.fraud_transactions GROUP BY "nameDest" ORDER BY so_lan DESC LIMIT 10'), conn)
+            if not top_dest.empty:
+                top_dest["nameDest"] = top_dest["nameDest"].apply(mask_account_id)
+                fig_top = px.bar(top_dest, x="so_lan", y="nameDest", orientation="h", color="tong_tien",
+                                 color_continuous_scale="OrRd", labels={"so_lan": "So Lan", "nameDest": "Tai Khoan Nhan", "tong_tien": "Tong Tien"})
+                fig_top.update_layout(height=320, margin=dict(t=10), yaxis={"categoryorder": "total ascending"}, coloraxis_showscale=False)
+                st.plotly_chart(fig_top, use_container_width=True)
+
+        with col_h:
+            st.markdown("**Xu Huong Tich Luy Gian Lan (3 Gio Qua)**")
+            with engine.connect() as conn:
+                cum_df = pd.read_sql(text("SELECT date_trunc('minute', ingested_at) as phut, COUNT(*) as fraud_count FROM shop.fraud_transactions WHERE ingested_at >= NOW() - INTERVAL '3 hours' GROUP BY phut ORDER BY phut"), conn)
+            if not cum_df.empty:
+                cum_df["luy_ke"] = cum_df["fraud_count"].cumsum()
+                fig_cum = px.line(cum_df, x="phut", y="luy_ke", labels={"phut": "Thoi Gian", "luy_ke": "Tich Luy"}, color_discrete_sequence=["#9C27B0"])
+                fig_cum.update_traces(fill="tozeroy", fillcolor="rgba(156,39,176,0.1)")
+                fig_cum.update_layout(height=320, margin=dict(t=10, b=10))
+                st.plotly_chart(fig_cum, use_container_width=True)
+            else:
+                st.info("Chua co du lieu 3 gio qua.")
+
+        st.divider()
+
+        st.markdown("**Top 10 Tai Khoan Gui Gian Lan Nhieu Nhat (Da che ten)**")
         with engine.connect() as conn:
-            hour_df = pd.read_sql(text("""
-                SELECT MOD(step, 24) as hour, COUNT(*) as fraud_count
+            top_acc_df = pd.read_sql(text("""
+                SELECT "nameOrig" as "Tai Khoan Gui", COUNT(*) as "So Lan Gian Lan",
+                       SUM(amount) as "Tong Tien Lua Dao", AVG(amount) as "Trung Binh Moi Lan"
                 FROM shop.fraud_transactions
-                GROUP BY hour
-                ORDER BY hour
+                GROUP BY "nameOrig" ORDER BY "So Lan Gian Lan" DESC LIMIT 10
             """), conn)
-        if not hour_df.empty:
-            fig_bar = px.bar(
-                hour_df, x="hour", y="fraud_count",
-                labels={"hour": "Khung Thời Gian Tập Dữ Liệu (0-23)", "fraud_count": "Số Lần Bị Phá"},
-                color_discrete_sequence=["#FF9800"]
-            )
-            fig_bar.update_xaxes(tickmode="linear", dtick=1)
-            fig_bar.update_layout(margin=dict(t=10))
-            st.plotly_chart(fig_bar, use_container_width=True)
+        if not top_acc_df.empty:
+            top_acc_df["Tai Khoan Gui"] = top_acc_df["Tai Khoan Gui"].apply(mask_account_id)
+            top_acc_df["Tong Tien Lua Dao"] = top_acc_df["Tong Tien Lua Dao"].apply(lambda x: f"${x:,.2f}")
+            top_acc_df["Trung Binh Moi Lan"] = top_acc_df["Trung Binh Moi Lan"].apply(lambda x: f"${x:,.2f}")
+            st.dataframe(top_acc_df, use_container_width=True, hide_index=True)
 
-    st.divider()
-    st.markdown("**🏆 Top 10 Tài Khoản Gian Lận Khủng Nhất (Đã che tên)**")
-    with engine.connect() as conn:
-        top_acc_df = pd.read_sql(text("""
-            SELECT "nameOrig" as "Tài Khoản Gửi", COUNT(*) as "Số Lần Gian Lận", SUM(amount) as "Tổng Tiền Lừa Đảo"
-            FROM shop.fraud_transactions
-            GROUP BY "nameOrig"
-            ORDER BY "Số Lần Gian Lận" DESC
-            LIMIT 10
-        """), conn)
-    if not top_acc_df.empty:
-        top_acc_df["Tài Khoản Gửi"] = top_acc_df["Tài Khoản Gửi"].apply(mask_account_id)
-        top_acc_df["Tổng Tiền Lừa Đảo"] = top_acc_df["Tổng Tiền Lừa Đảo"].apply(lambda x: f"${x:,.2f}")
-        st.table(top_acc_df)
+    render_analytics()
+
