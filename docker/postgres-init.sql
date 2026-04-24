@@ -82,19 +82,5 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA shop TO fraud_user;
 -- Log
 DO $$ BEGIN RAISE NOTICE '✅ Database initialized with schema shop, tables, indexes, and permissions'; END $$;
 
--- ══════════════════════════════════════════════════════════════════
--- Tạo database riêng cho Apache Airflow metadata
--- Airflow cần một DB riêng để lưu DAG runs, task instances, logs.
--- Dùng chung PostgreSQL container để tiết kiệm RAM.
--- ══════════════════════════════════════════════════════════════════
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'airflow_db') THEN
-        PERFORM dblink_exec('dbname=postgres', 'CREATE DATABASE airflow_db');
-    END IF;
-END
-$$;
-
--- Cấp quyền cho fraud_user (cùng user cho cả 2 DB để đơn giản)
-GRANT ALL PRIVILEGES ON DATABASE airflow_db TO fraud_user;
-DO $$ BEGIN RAISE NOTICE '✅ airflow_db created/verified for Apache Airflow metadata'; END $$;
+-- Log
+DO $$ BEGIN RAISE NOTICE '✅ Database schema shop initialized'; END $$;

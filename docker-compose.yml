@@ -47,7 +47,8 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./docker/postgres-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
       - postgres_data:/var/lib/postgresql/data
     networks:
       - fraud_network
