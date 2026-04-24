@@ -117,7 +117,7 @@ with st.sidebar:
                 f"{MLFLOW_URL}/api/2.0/mlflow/runs/search",
                 json={"experiment_ids": ["0", "1", "2"], "max_results": 1,
                       "order_by": ["start_time DESC"]},
-                timeout=5
+                timeout=30
             )
             resp.raise_for_status()
             runs = resp.json()
@@ -125,6 +125,8 @@ with st.sidebar:
                 metrics_list = runs["runs"][0]["data"].get("metrics", [])
                 return {m["key"]: m["value"] for m in metrics_list}
             return None
+        except requests.exceptions.Timeout:
+            return {"error": "MLflow đang bận, thử lại sau..."}
         except Exception as e:
             return {"error": str(e)}
 

@@ -47,8 +47,8 @@ with DAG(
     reload_blacklist = BashOperator(
         task_id="reload_blacklist_into_redis",
         bash_command=(
-            "docker exec transaction_consumer "
-            "spark-submit /app/jobs/blacklist_loader.py"
+            "docker exec blacklist_loader "
+            "spark-submit /app/scripts/blacklist_loader.py"
         ),
         # Đặt timeout 30 phút — file paysim.csv 500MB cần thời gian đọc
         execution_timeout=timedelta(minutes=30),
